@@ -4,14 +4,13 @@ import { TranscriptionManager } from "../manager/TranscriptionManager";
 import { AudioManager } from "../manager/AudioManager";
 import { StorageManager } from "../manager/StorageManager";
 import { InputManager } from "../manager/InputManager";
-import { SheetManager } from "../manager/SheetManager"; // <--- New Import
+import { SheetManager } from "../manager/SheetManager"; 
+import { RecordManager } from "../manager/RecordManager"; // <--- NEW
+import { SurveyApp } from "../SurveyApp"; // <--- NEW
 
 /**
  * User — per-user state container.
- *
  * Composes all managers and holds the glasses AppSession.
- * Created when a user connects (glasses or webview) and
- * destroyed when the session is cleaned up.
  */
 export class User {
   /** Active glasses connection, null when webview-only */
@@ -33,7 +32,13 @@ export class User {
   input: InputManager;
 
   /** Google Sheets integration for survey script */
-  sheetManager: SheetManager; // <--- New Property
+  sheetManager: SheetManager;
+
+  /** Local audio recording and folder management */
+  recordManager: RecordManager; // <--- NEW
+
+  /** The brain that handles the survey steps */
+  surveyApp: SurveyApp; // <--- NEW
 
   constructor(public readonly userId: string) {
     this.photo = new PhotoManager(this);
@@ -41,7 +46,9 @@ export class User {
     this.audio = new AudioManager(this);
     this.storage = new StorageManager(this);
     this.input = new InputManager(this);
-    this.sheetManager = new SheetManager(); // <--- Initialize here
+    this.sheetManager = new SheetManager();
+    this.recordManager = new RecordManager(this); // <--- Initialize
+    this.surveyApp = new SurveyApp(this); // <--- Initialize
   }
 
   /** Wire up a glasses connection — sets up all event listeners */
@@ -49,10 +56,14 @@ export class User {
     this.appSession = session;
     this.transcription.setup(session);
     this.input.setup(session);
-    console.log(`📸 Survey System ready for ${this.userId}`);
+    
+    // 🚀 Start the survey automatically when glasses connect
+    this.surveyApp.startSurvey("JOB-DEMO-001");
+    
+    console.log(`📋 Survey System ready for ${this.userId}`);
   }
 
-  /** Disconnect glasses but keep user alive (photos, SSE clients stay) */
+  /** Disconnect glasses but keep user alive (photos stay) */
   clearAppSession(): void {
     this.transcription.destroy();
     this.appSession = null;
