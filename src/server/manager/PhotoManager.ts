@@ -1,4 +1,6 @@
 import type { User } from "../session/User";
+import fs from "fs";
+import path from "path";
 
 export interface StoredPhoto {
   requestId: string;
@@ -17,7 +19,8 @@ interface SSEWriter {
 }
 
 /**
- * PhotoManager — captures, stores, and broadcasts photos for a single user.
+ * PhotoManager — captures, stores, and broadcasts photos.
+ * Updated: Now saves a physical copy to the local RecordManager folder.
  */
 export class PhotoManager {
   private photos: Map<string, StoredPhoto> = new Map();
@@ -25,31 +28,50 @@ export class PhotoManager {
 
   constructor(private user: User) {}
 
-  /** Capture a photo from the glasses and store + broadcast it */
+  /** Capture a photo from the glasses, save to disk, and broadcast to UI */
   async takePhoto(): Promise<void> {
     const session = this.user.appSession;
     if (!session) throw new Error("No active glasses session");
 
-    const photo = await session.camera.requestPhoto();
+    try {
+      // 1. Request the photo from the glasses
+      const photo = await session.camera.requestPhoto();
 
-    const stored: StoredPhoto = {
-      requestId: photo.requestId,
-      buffer: photo.buffer,
-      timestamp: photo.timestamp,
-      userId: this.user.userId,
-      mimeType: photo.mimeType,
-      filename: photo.filename,
-      size: photo.size,
-    };
+      const stored: StoredPhoto = {
+        requestId: photo.requestId,
+        buffer: photo.buffer,
+        timestamp: photo.timestamp,
+        userId: this.user.userId,
+        mimeType: photo.mimeType,
+        filename: photo.filename,
+        size: photo.size,
+      };
 
-    this.photos.set(photo.requestId, stored);
-    this.broadcastPhoto(stored);
-    console.log(
-      `📸 Photo captured for ${this.user.userId} (${photo.size} bytes)`,
-    );
+      // 2. Save a physical copy to your MacBook for the Audit Trail
+      const sessionDir = this.user.recordManager.getFolder();
+      if (sessionDir && fs.existsSync(sessionDir)) {
+        // Create a clear filename: Photo_Timestamp.jpg
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const localFilename = `Photo_${timestamp}.jpg`;
+        const filePath = path.join(sessionDir, localFilename);
+        
+        fs.writeFileSync(filePath, photo.buffer);
+        console.log(`💾 File Saved: ${filePath}`);
+      }
+
+      // 3. Keep in memory and broadcast to the Web Dashboard
+      this.photos.set(photo.requestId, stored);
+      this.broadcastPhoto(stored);
+      
+      console.log(
+        `📸 Photo broadcast to UI for ${this.user.userId} (${photo.size} bytes)`,
+      );
+    } catch (error) {
+      console.error("❌ Photo Capture/Save Error:", error);
+    }
   }
 
-  /** Push a photo to all connected SSE clients */
+  /** Push a photo to all connected SSE clients (Web Dashboard) */
   broadcastPhoto(photo: StoredPhoto): void {
     const base64Data = photo.buffer.toString("base64");
     const payload = JSON.stringify({
@@ -81,11 +103,6 @@ export class PhotoManager {
     return Array.from(this.photos.values()).sort(
       (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
     );
-  }
-
-  /** The full photos map (used by SSE to send history on connect) */
-  getAllMap(): Map<string, StoredPhoto> {
-    return this.photos;
   }
 
   removeAll(): void {

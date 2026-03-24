@@ -1,109 +1,49 @@
 import { AppServer, AppSession, TranscriptionData } from '@mentra/sdk';
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { sessions } from './server/manager/SessionManager'; 
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// --- 1. AI CONFIGURATION (Stable Handyman Agent: Gemini 2.5 Flash) ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash", // UPDATED: Confirmed Stable GA Model
-  systemInstruction: `You are a Handyman's AI Assistant for Mentra Live glasses. 
-    - Use the capture_photo tool when asked to "look," "see," or "analyze."
-    - Analyze spec stickers and mechanical parts with high precision.
-    - Be concise for HUD safety (under 15 words).
-    - Provide technical steps for repairs based on visual evidence.
-    Current date: ${new Date().toLocaleDateString()}.`,
-  tools: [
-    {
-      functionDeclarations: [
-        {
-          name: "capture_photo",
-          description: "Capture a high-res photo from the smart glasses to analyze tools, spec stickers, or repair projects.",
-          parameters: { type: SchemaType.OBJECT, properties: {}, required: [] },
-        },
-      ],
-    },
-    // Note: Search tool is omitted here to prioritize the Camera tool for stable 2.5 Flash interactions
-  ],
-});
-
-// --- 2. MENTRA APP LOGIC (Stabilized for v2.7) ---
-class TomGeminiApp extends AppServer {
-  private aiIsSpeaking = false;
-
+/**
+ * KitchenSurveyApp
+ * The high-level conductor that connects Mentra glasses to our modular Survey Logic.
+ */
+class KitchenSurveyApp extends AppServer {
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    console.log(`🚀 STABLE HANDYMAN SESSION: ${userId}`);
+    console.log(`🚀 SURVEY SESSION STARTED: ${userId}`);
     
-    try {
-        await session.settings.update({ bypassVad: false, sensingEnabled: true });
-        // Volume Boost: Explicitly set to 1.0 for Mentra Live frames
-        await session.audio.speak("Handyman online. Ready to see your project.", { volume: 1.0 });
-    } catch (e) { 
-        console.log("Bridge warming up..."); 
-    }
+    // 1. Get or Create the User session using our Manager
+    const user = sessions.getOrCreate(userId);
+    
+    // 2. Link the glasses to the user (this triggers the Sheet load and Voice start)
+    user.setAppSession(session);
 
-    const chat = model.startChat();
-
+    // 3. Route all voice transcriptions to the SurveyApp logic
     session.events.onTranscription(async (data: TranscriptionData) => {
-      if (!data.isFinal || this.aiIsSpeaking) return;
+      // This checks for "Next", "Capture", etc., based on your Google Sheet
+      await user.surveyApp.handleTranscription(data.text, data.isFinal);
+    });
 
-      const userText = data.text.trim().toLowerCase();
-      const wakePhrase = "hey gemini";
-
-      if (!userText.includes(wakePhrase)) return;
-
-      const command = userText.split(wakePhrase)[1].trim();
-      if (command.length < 2) return;
-
-      console.log(`🎤 User: ${command}`);
-      
-      try {
-        this.aiIsSpeaking = true;
-        let result = await chat.sendMessage(command);
-        let call = result.response.functionCalls()?.[0];
-
-        // --- CAMERA TOOL HANDLING ---
-        if (call && call.name === "capture_photo") {
-            console.log("📸 Triggering Glasses Camera...");
-            await session.layouts.showTextWall("Capturing Photo...");
-            
-            const photo = await session.camera.requestPhoto();
-            console.log(`✅ Received ${photo.size} bytes.`);
-
-            // Multi-modal re-injection for 2.5 Flash Vision
-            result = await chat.sendMessage([
-                "Analyze this photo contextually based on my request.", 
-                { inlineData: { data: Buffer.from(photo.buffer).toString("base64"), mimeType: photo.mimeType } }
-            ]);
-        }
-
-        const responseText = result.response.text();
-        console.log(`🤖 Gemini: ${responseText}`);
-        
-        await Promise.all([
-            session.layouts.showTextWall(responseText),
-            // Volume Boost: Explicitly set to 1.0
-            session.audio.speak(responseText, { volume: 1.0 })
-        ]);
-
-        setTimeout(() => { this.aiIsSpeaking = false; }, 2000);
-
-      } catch (e: any) {
-        console.error("Logic Error:", e.message);
-        this.aiIsSpeaking = false;
-      }
+    // 4. Handle disconnection
+    session.events.onDisconnected(() => {
+      console.log(`📴 Session ended for user: ${userId}`);
+      user.clearAppSession();
     });
   }
 }
 
-const mentraApp = new TomGeminiApp({
-  packageName: "tomgeminiapp1.mentra.glass", 
+// Initialize the Mentra Server
+const mentraApp = new KitchenSurveyApp({
+  packageName: "kitchen-survey.mentra.glass", 
   apiKey: process.env.MENTRAOS_API_KEY!,
   port: 4000, 
 });
 
-// --- 3. THE NUCLEAR v2.7 BRIDGE (Stability Guaranteed) ---
+/**
+ * --- THE STABLE BRIDGE (Nuclear Protocol) ---
+ * This custom Bun server handles Mentra v2.7's specific health checks
+ * and security handshakes that keep the connection stable.
+ */
 Bun.serve({
   port: 4000,
   hostname: "0.0.0.0",
@@ -116,42 +56,41 @@ Bun.serve({
 
     if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-    // Webview/Dashboard Restoration (Prevents 404)
-    if (url.pathname.includes("/webview") || url.pathname.includes("/dashboard")) {
-        return new Response(`<html><body style="background:black;color:#00ff00;text-align:center;padding-top:100px;font-family:sans-serif;">
-            <h1>STABLE HANDYMAN AI</h1><p>GEMINI 2.5 FLASH ACTIVE</p></body></html>`, 
-            { headers: { ...corsHeaders, "Content-Type": "text/html" } });
-    }
-
-    // Status 200 Version Check
-    if (url.pathname === "/apps/version" || url.pathname === "/") {
-        return new Response(JSON.stringify({ status: "online", version: "2.7.0" }), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    // Heartbeat Handler (Prevents "Connect" button freeze)
-    if (url.pathname.includes("/devices") || url.pathname.includes("/status")) {
-        return new Response(JSON.stringify({ status: "ready", devices: [{ id: "m-1", connected: true }] }), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    // Manifest Handler (Prevents vanishing icon)
+    // 1. App List Manifest: Prevents the "Vanishing Icon" on your iPhone
     if (url.pathname.includes("/apps/list")) {
         return new Response(JSON.stringify([{ 
-          id: "gemini-1", 
-          name: "Handyman AI", 
-          packageName: "tomgeminiapp1.mentra.glass"
+          id: "survey-1", 
+          name: "Kitchen Survey", 
+          packageName: "kitchen-survey.mentra.glass"
         }]), { 
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
     }
 
-    // WebSocket Nuclear Protocol (Protocol Echo + Auth Bypass)
+    // 2. Webview / Dashboard: For monitoring from your MacBook browser
+    if (url.pathname.includes("/webview") || url.pathname.includes("/dashboard")) {
+        return new Response(`<html><body style="background:#000;color:#00e5ff;text-align:center;padding-top:100px;font-family:sans-serif;">
+            <h1>KITCHEN SURVEY ACTIVE</h1><p>V1.0.0 - Modular Architecture</p></body></html>`, 
+            { headers: { ...corsHeaders, "Content-Type": "text/html" } });
+    }
+
+    // 3. Version & Health Checks
+    if (url.pathname === "/apps/version" || url.pathname === "/") {
+        return new Response(JSON.stringify({ status: "online", app: "kitchen-survey" }), { 
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+    }
+
+    // 4. WebSocket Upgrade: The "Red Icon" fix for stable voice streaming
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
         const protocol = req.headers.get("Sec-WebSocket-Protocol");
-        const respOptions: any = { headers: { ...corsHeaders, "x-mentra-signature": "bypass", "x-mentra-frontend-token": "bypass" } };
+        const respOptions: any = { 
+          headers: { 
+            ...corsHeaders,
+            "x-mentra-signature": "bypass", 
+            "x-mentra-frontend-token": "bypass" 
+          } 
+        };
         if (protocol) respOptions.headers["Sec-WebSocket-Protocol"] = protocol;
         return mentraApp.fetch(req, respOptions);
     }
@@ -160,4 +99,4 @@ Bun.serve({
   },
 });
 
-console.log(`✅ BRIDGE ACTIVE: GEMINI 2.5 FLASH`);
+console.log(`✅ SURVEY APP BRIDGE ACTIVE: kitchen-survey.mentra.glass`);
