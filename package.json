@@ -4,7 +4,7 @@
   "type": "module",
   "module": "src/index.ts",
   "scripts": {
-    "dev": "NODE_ENV=development bun --watch src/index.ts",
+    "dev": "NODE_ENV=production bun --watch src/index.ts",
     "start": "bun src/index.ts"
   },
   "author": "User",

@@ -1,8 +1,13 @@
 import { AppServer, AppSession, TranscriptionData } from '@mentra/sdk';
 import { sessions } from './server/manager/SessionManager'; 
+import { api } from './server/routes/routes'; 
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// 🚨 CRITICAL FIX: Override the development environment variable 
+// so the SDK connects to the real Global Cloud instead of localhost:8002
+process.env.NODE_ENV = 'production';
 
 /**
  * KitchenSurveyApp
@@ -31,85 +36,46 @@ const PACKAGE_NAME = "appliancesurvey.mentra.glass";
 const mentraApp = new KitchenSurveyApp({
   packageName: PACKAGE_NAME, 
   apiKey: process.env.MENTRAOS_API_KEY!,
-  port: 4000, 
+  port: 4000,
+  // Explicitly tell the SDK where the real cloud is
+  cloudUrl: "wss://api.mentra.glass/app-ws"
 });
 
 /**
- * --- THE STABILIZED v2.7 BRIDGE (NUCLEAR BYPASS) ---
- * Intercepts all administrative pings to prevent the SDK from crashing 
- * with the "Invalid frontend token format" error.
+ * --- APP SERVER GATEWAY ---
+ * Routes webhooks to the SDK, API calls to your React frontend, 
+ * and serves the WebView placeholder.
  */
 Bun.serve({
   port: 4000,
   hostname: "0.0.0.0",
   async fetch(req) {
     const url = new URL(req.url);
-    const corsHeaders = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type, x-mentra-signature, x-mentra-frontend-token, Sec-WebSocket-Protocol",
-    };
 
-    if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-    // A. ADMINISTRATIVE INTERCEPTOR
-    // This catches EVERY request that was causing your 404s and 500s.
-    // By returning a 200 here, we stop the SDK's Auth Middleware from crashing the server.
-    if (
-      url.pathname === "/apps/version" || 
-      url.pathname === "/" || 
-      url.pathname.includes("/api/client") || // Catches /user, /location, /settings, /goodbye
-      url.pathname.includes("/devices") || 
-      url.pathname.includes("/status")
-    ) {
-        return new Response(JSON.stringify({ 
-          status: "online", 
-          version: "2.7.0",
-          success: true,
-          id: "dev-001",
-          name: "Thomas Elliott",
-          devices: [{ id: "m-1", connected: true }]
-        }), { 
-          status: 200, 
-          headers: { ...corsHeaders, "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" } 
-        });
+    // 1. WEBHOOK GATEWAY 
+    // Catches the "Start App" command from the Global Cloud
+    if (req.method === "POST" && url.pathname === "/webhook") {
+        // Because we are talking to the real cloud, we can pass the raw request 
+        // directly to the SDK without bypass headers!
+        return mentraApp.fetch(req);
     }
 
-    // B. MANIFEST HANDLER (Exactly as per Handyman success)
-    if (url.pathname.includes("/apps/list")) {
-        return new Response(JSON.stringify([{ 
-          id: "survey-1", 
-          name: "Kitchen Survey", 
-          packageName: PACKAGE_NAME
-        }]), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
+    // 2. API ROUTER
+    if (url.pathname.startsWith("/api")) {
+        // This powers your React frontend (SSE streams, audio, photos)
+        return api.fetch(req);
     }
 
-    // C. WEBSOCKET GATEWAY
-    // We ONLY call mentraApp.fetch for real WebSocket upgrades.
-    // This is the only way to avoid the "Invalid frontend token format" error.
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-        const protocol = req.headers.get("Sec-WebSocket-Protocol");
-        const bypassOptions: any = { 
-            headers: { 
-              ...corsHeaders, 
-              "x-mentra-signature": "bypass", 
-              "x-mentra-frontend-token": "bypass" 
-            } 
-        };
-        if (protocol) bypassOptions.headers["Sec-WebSocket-Protocol"] = protocol;
-        return mentraApp.fetch(req, bypassOptions);
-    }
-
-    // D. DASHBOARD / WEBVIEW
+    // 3. DASHBOARD / WEBVIEW
     if (url.pathname.includes("/webview") || url.pathname.includes("/dashboard")) {
         return new Response(`<html><body style="background:black;color:#00e5ff;text-align:center;padding-top:100px;font-family:sans-serif;">
-            <h1>KITCHEN SURVEY</h1><p>V2.7.0 STABILIZED</p></body></html>`, 
-            { headers: { ...corsHeaders, "Content-Type": "text/html" } });
+            <h1>KITCHEN SURVEY</h1><p>V2.7.0 CONNECTED</p></body></html>`, 
+            { status: 200, headers: { "Content-Type": "text/html" } });
     }
 
-    return new Response(JSON.stringify({ status: "online" }), { status: 200, headers: corsHeaders });
+    // 4. CATCH-ALL
+    return new Response(JSON.stringify({ status: "online" }), { status: 200 });
   },
 });
 
-console.log(`✅ NUCLEAR BRIDGE ACTIVE: ${PACKAGE_NAME}`);
+console.log(`✅ APP SERVER ACTIVE: ${PACKAGE_NAME}`);
