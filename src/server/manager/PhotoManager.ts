@@ -37,9 +37,12 @@ export class PhotoManager {
       // 1. Request the photo from the glasses
       const photo = await session.camera.requestPhoto();
 
+      // CONVERT: Turn the SDK's ArrayBuffer into a standard Node.js Buffer
+      const nodeBuffer = Buffer.from(photo.buffer);
+
       const stored: StoredPhoto = {
         requestId: photo.requestId,
-        buffer: photo.buffer,
+        buffer: nodeBuffer, // <-- Use the converted buffer here
         timestamp: photo.timestamp,
         userId: this.user.userId,
         mimeType: photo.mimeType,
@@ -55,7 +58,8 @@ export class PhotoManager {
         const localFilename = `Photo_${timestamp}.jpg`;
         const filePath = path.join(sessionDir, localFilename);
         
-        fs.writeFileSync(filePath, photo.buffer);
+        // Write the converted Node buffer to the file system
+        fs.writeFileSync(filePath, nodeBuffer);
         console.log(`💾 File Saved: ${filePath}`);
       }
 

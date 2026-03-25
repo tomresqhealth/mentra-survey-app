@@ -51,7 +51,7 @@ export class SurveyApp {
    * This is the "Ear" of the app. It listens to what you say and 
    * decides if it should trigger a photo or go to the next step.
    */
-  async handleTranscription(text: string, isFinal: boolean) {
+async handleTranscription(text: string, isFinal: boolean) {
     if (!this.isSurveyActive || !isFinal) return;
 
     const lowerText = text.toLowerCase();
@@ -60,13 +60,17 @@ export class SurveyApp {
     // Logic for "Capture" trigger
     if (lowerText.includes("capture") || lowerText.includes("take photo")) {
       await this.user.audio.speak("Capturing photo.");
-      // In v1, we just take the photo. In v2, we can upload it to a specific Drive folder.
       await this.user.photo.takePhoto(); 
       return;
     }
 
-    // Logic for "Next" trigger (moves to the next row in the sheet)
-    if (lowerText.includes("next") || lowerText.includes("continue")) {
+    // Clean up the trigger word from the sheet (removes any stray quotes and makes it lowercase)
+    const nextTriggerWord = currentStep.nextTrigger 
+        ? currentStep.nextTrigger.toLowerCase().replace(/["']/g, '') 
+        : "next";
+
+    // Logic for dynamic "Next" trigger
+    if (lowerText.includes(nextTriggerWord) || lowerText.includes("continue")) {
       this.currentStepIndex++;
 
       if (this.currentStepIndex < this.steps.length) {
@@ -76,7 +80,6 @@ export class SurveyApp {
       }
     }
   }
-
   private async finishSurvey() {
     this.isSurveyActive = false;
     await this.user.audio.speak("Survey complete. Finalizing audio record and saving files.");
