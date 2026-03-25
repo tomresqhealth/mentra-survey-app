@@ -5,10 +5,6 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 🚨 CRITICAL FIX: Override the development environment variable 
-// so the SDK connects to the real Global Cloud instead of localhost:8002
-process.env.NODE_ENV = 'production';
-
 /**
  * KitchenSurveyApp
  * Conducts the survey logic and session management.
@@ -18,6 +14,11 @@ class KitchenSurveyApp extends AppServer {
     console.log(`🚀 SURVEY SESSION STARTED: ${userId}`);
     const user = sessions.getOrCreate(userId);
     user.setAppSession(session);
+
+    // 🚨 Explicit error listener to catch hidden SDK connection failures
+    session.events.onError((error) => {
+      console.error(`❌ SDK SESSION ERROR [${userId}]:`, error);
+    });
 
     session.events.onTranscription(async (data: TranscriptionData) => {
       await user.surveyApp.handleTranscription(data.text, data.isFinal);
@@ -36,15 +37,12 @@ const PACKAGE_NAME = "appliancesurvey.mentra.glass";
 const mentraApp = new KitchenSurveyApp({
   packageName: PACKAGE_NAME, 
   apiKey: process.env.MENTRAOS_API_KEY!,
-  port: 4000,
-  // Explicitly tell the SDK where the real cloud is
-  cloudUrl: "wss://api.mentra.glass/app-ws"
+  port: 4000
 });
 
 /**
- * --- APP SERVER GATEWAY ---
- * Routes webhooks to the SDK, API calls to your React frontend, 
- * and serves the WebView placeholder.
+ * --- APP SERVER GATEWAY (DIAGNOSTIC MODE) ---
+ * Routes webhooks to the SDK and catches all hidden errors.
  */
 Bun.serve({
   port: 4000,
@@ -53,16 +51,26 @@ Bun.serve({
     const url = new URL(req.url);
 
     // 1. WEBHOOK GATEWAY 
-    // Catches the "Start App" command from the Global Cloud
     if (req.method === "POST" && url.pathname === "/webhook") {
-        // Because we are talking to the real cloud, we can pass the raw request 
-        // directly to the SDK without bypass headers!
-        return mentraApp.fetch(req);
+        try {
+            // Clone the request so we can read the body without starving the SDK
+            const clonedReq = req.clone();
+            const bodyText = await clonedReq.text();
+            console.log(`\n📥 INCOMING WEBHOOK:\n${bodyText}\n`);
+
+            // Pass the original request to the SDK
+            const response = await mentraApp.fetch(req);
+            console.log(`📤 WEBHOOK RESPONSE STATUS: ${response.status}`);
+            return response;
+        } catch (error) {
+            // Catch and print the exact error causing the 500s!
+            console.error("❌ CRITICAL WEBHOOK ERROR:", error);
+            return new Response("Internal Server Error", { status: 500 });
+        }
     }
 
     // 2. API ROUTER
     if (url.pathname.startsWith("/api")) {
-        // This powers your React frontend (SSE streams, audio, photos)
         return api.fetch(req);
     }
 
@@ -78,4 +86,4 @@ Bun.serve({
   },
 });
 
-console.log(`✅ APP SERVER ACTIVE: ${PACKAGE_NAME}`);
+console.log(`✅ DIAGNOSTIC SERVER ACTIVE: ${PACKAGE_NAME}`);
