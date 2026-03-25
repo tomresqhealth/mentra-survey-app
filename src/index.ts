@@ -11,23 +11,25 @@ dotenv.config();
  */
 class KitchenSurveyApp extends AppServer {
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    console.log(`🚀 SURVEY SESSION STARTED: ${userId}`);
-    const user = sessions.getOrCreate(userId);
-    user.setAppSession(session);
+    try {
+        console.log(`🚀 SURVEY SESSION STARTED: ${userId}`);
+        const user = sessions.getOrCreate(userId);
+        
+        // If anything inside setAppSession crashes, it will be caught below!
+        user.setAppSession(session);
 
-    // 🚨 Explicit error listener to catch hidden SDK connection failures
-    session.events.onError((error) => {
-      console.error(`❌ SDK SESSION ERROR [${userId}]:`, error);
-    });
+        session.events.onTranscription(async (data: TranscriptionData) => {
+          await user.surveyApp.handleTranscription(data.text, data.isFinal);
+        });
 
-    session.events.onTranscription(async (data: TranscriptionData) => {
-      await user.surveyApp.handleTranscription(data.text, data.isFinal);
-    });
-
-    session.events.onDisconnected(() => {
-      console.log(`📴 Session ended: ${userId}`);
-      user.clearAppSession();
-    });
+        session.events.onDisconnected(() => {
+          console.log(`📴 Session ended: ${userId}`);
+          user.clearAppSession();
+        });
+    } catch (error) {
+        // This prevents the SDK from returning a 500 error to the cloud!
+        console.error(`🔥 CRITICAL ERROR IN onSession for ${userId}:`, error);
+    }
   }
 }
 
@@ -41,8 +43,9 @@ const mentraApp = new KitchenSurveyApp({
 });
 
 /**
- * --- APP SERVER GATEWAY (DIAGNOSTIC MODE) ---
- * Routes webhooks to the SDK and catches all hidden errors.
+ * --- APP SERVER GATEWAY ---
+ * Routes webhooks to the SDK, API calls to your React frontend, 
+ * and serves the WebView placeholder.
  */
 Bun.serve({
   port: 4000,
@@ -51,26 +54,14 @@ Bun.serve({
     const url = new URL(req.url);
 
     // 1. WEBHOOK GATEWAY 
+    // Catches the "Start App" command from the Global Cloud
     if (req.method === "POST" && url.pathname === "/webhook") {
-        try {
-            // Clone the request so we can read the body without starving the SDK
-            const clonedReq = req.clone();
-            const bodyText = await clonedReq.text();
-            console.log(`\n📥 INCOMING WEBHOOK:\n${bodyText}\n`);
-
-            // Pass the original request to the SDK
-            const response = await mentraApp.fetch(req);
-            console.log(`📤 WEBHOOK RESPONSE STATUS: ${response.status}`);
-            return response;
-        } catch (error) {
-            // Catch and print the exact error causing the 500s!
-            console.error("❌ CRITICAL WEBHOOK ERROR:", error);
-            return new Response("Internal Server Error", { status: 500 });
-        }
+        return mentraApp.fetch(req);
     }
 
     // 2. API ROUTER
     if (url.pathname.startsWith("/api")) {
+        // This powers your React frontend (SSE streams, audio, photos)
         return api.fetch(req);
     }
 
@@ -86,4 +77,4 @@ Bun.serve({
   },
 });
 
-console.log(`✅ DIAGNOSTIC SERVER ACTIVE: ${PACKAGE_NAME}`);
+console.log(`✅ APP SERVER ACTIVE: ${PACKAGE_NAME}`);

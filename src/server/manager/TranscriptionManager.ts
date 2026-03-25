@@ -34,11 +34,15 @@ export class TranscriptionManager {
 
     // 2. Raw Audio Capture (New logic for the Master Record)
     // This catches the raw PCM audio chunks coming from the glasses
+
+    // TEMPORARILY COMMENT OUT THIS BLOCK:
+    /*
     this.audioUnsubscribe = session.audio.subscribeToStream((chunk: Buffer) => {
       if (this.user.recordManager) {
         this.user.recordManager.appendAudioChunk(chunk);
       }
     });
+    */
     
     console.log("🎙️ Audio stream and transcription listeners active.");
   }
