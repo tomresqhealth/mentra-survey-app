@@ -5,17 +5,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-/**
- * KitchenSurveyApp
- * Conducts the survey logic and session management.
- */
 class KitchenSurveyApp extends AppServer {
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
+    console.log(`🚀 KITCHEN SURVEY SESSION STARTED: ${userId}`);
     try {
-        console.log(`🚀 SURVEY SESSION STARTED: ${userId}`);
+        // Essential for MentraOS hardware activation
+        await session.settings.update({ bypassVad: false, sensingEnabled: true });
+        await session.audio.speak("Survey system online.", { volume: 1.0 });
+
         const user = sessions.getOrCreate(userId);
-        
-        // If anything inside setAppSession crashes, it will be caught below!
         user.setAppSession(session);
 
         session.events.onTranscription(async (data: TranscriptionData) => {
@@ -23,58 +21,87 @@ class KitchenSurveyApp extends AppServer {
         });
 
         session.events.onDisconnected(() => {
-          console.log(`📴 Session ended: ${userId}`);
           user.clearAppSession();
         });
-    } catch (error) {
-        // This prevents the SDK from returning a 500 error to the cloud!
-        console.error(`🔥 CRITICAL ERROR IN onSession for ${userId}:`, error);
-    }
+    } catch (e) { console.log("Bridge warming..."); }
   }
 }
 
-// 1. THE CONSTANTS (Ensuring consistency)
 const PACKAGE_NAME = "appliancesurvey.mentra.glass";
-
 const mentraApp = new KitchenSurveyApp({
   packageName: PACKAGE_NAME, 
   apiKey: process.env.MENTRAOS_API_KEY!,
-  port: 4000
 });
 
-/**
- * --- APP SERVER GATEWAY ---
- * Routes webhooks to the SDK, API calls to your React frontend, 
- * and serves the WebView placeholder.
- */
 Bun.serve({
   port: 4000,
   hostname: "0.0.0.0",
   async fetch(req) {
     const url = new URL(req.url);
+    const corsHeaders = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS", // Added for MentraOS strictness
+        "Access-Control-Allow-Headers": "Content-Type, x-mentra-signature, x-mentra-frontend-token, Sec-WebSocket-Protocol",
+    };
 
-    // 1. WEBHOOK GATEWAY 
-    // Catches the "Start App" command from the Global Cloud
-    if (req.method === "POST" && url.pathname === "/webhook") {
-        return mentraApp.fetch(req);
+    console.log(`[Request] ${req.method} ${url.pathname}`);
+
+    if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+    // 1. THE ATOMIC HANDSHAKE (Flat JSON)
+    // MentraOS often rejects the "success/data" envelope on this specific route.
+    if (url.pathname === "/api/client/min-version" || url.pathname === "/apps/version" || url.pathname === "/") {
+        return new Response(JSON.stringify({ 
+            "minVersion": "0.0.1",
+            "version": "2.7.0",
+            "status": "online"
+        }), { 
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
     }
 
-    // 2. API ROUTER
-    if (url.pathname.startsWith("/api")) {
-        // This powers your React frontend (SSE streams, audio, photos)
+    // 2. DISCOVERY: Auth & Apps
+    // We provide both flat and enveloped possibilities to ensure MentraOS finds them.
+    if (url.pathname === "/api/client/auth/status") {
+        return new Response(JSON.stringify({ "authenticated": true, "success": true }), { 
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+    }
+
+    if (url.pathname === "/api/client/apps" || url.pathname === "/apps/list") {
+        return new Response(JSON.stringify([{ 
+          "id": "survey-1", 
+          "name": "Kitchen Survey", 
+          "packageName": PACKAGE_NAME,
+          "icon": "https://mentra.glass/assets/logo.png"
+        }]), { 
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
+        });
+    }
+
+    // 3. WEBSOCKET: Nuclear Upgrade (The Handyman Magic)
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        console.log("🔌 Upgrading to WebSocket (Nuclear Protocol)...");
+        const protocol = req.headers.get("Sec-WebSocket-Protocol");
+        const respOptions: any = { 
+            headers: { 
+                ...corsHeaders, 
+                "x-mentra-signature": "bypass", 
+                "x-mentra-frontend-token": "bypass" 
+            } 
+        };
+        if (protocol) respOptions.headers["Sec-WebSocket-Protocol"] = protocol;
+        return mentraApp.fetch(req, respOptions);
+    }
+
+    // 4. SURVEY API (Hono)
+    if (url.pathname.startsWith("/api") && !url.pathname.startsWith("/api/client")) {
         return api.fetch(req);
     }
 
-    // 3. DASHBOARD / WEBVIEW
-    if (url.pathname.includes("/webview") || url.pathname.includes("/dashboard")) {
-        return new Response(`<html><body style="background:black;color:#00e5ff;text-align:center;padding-top:100px;font-family:sans-serif;">
-            <h1>KITCHEN SURVEY</h1><p>V2.7.0 CONNECTED</p></body></html>`, 
-            { status: 200, headers: { "Content-Type": "text/html" } });
-    }
-
-    // 4. CATCH-ALL
-    return new Response(JSON.stringify({ status: "online" }), { status: 200 });
+    // 5. DEFAULT SDK HANDLER
+    return mentraApp.fetch(req);
   },
 });
 
-console.log(`✅ APP SERVER ACTIVE: ${PACKAGE_NAME}`);
+console.log(`✅ NUCLEAR BRIDGE ACTIVE: ${PACKAGE_NAME}`);

@@ -1,18 +1,20 @@
-/**
- * API Route Definitions
- *
- * Maps HTTP methods + paths to handler functions.
- * Each handler lives in its own file under api/.
- */
-
 import { Hono } from "hono";
+import { cors } from "hono/cors"; // Import CORS middleware
 import { getHealth } from "../api/health";
 import { photoStream, transcriptionStream } from "../api/stream";
 import { speak, stopAudio } from "../api/audio";
 import { getThemePreference, setThemePreference } from "../api/storage";
 import { getLatestPhoto, getPhotoData, getPhotoBase64 } from "../api/photo";
 
-export const api = new Hono();
+// Create the Hono instance
+export const api = new Hono().basePath("/api"); // Tell Hono all these routes start with /api
+
+// 1. Enable CORS for the iPhone app
+api.use("*", cors({
+  origin: "*",
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowHeaders: ["Content-Type", "x-mentra-signature", "x-mentra-frontend-token"],
+}));
 
 // Health
 api.get("/health", getHealth);
