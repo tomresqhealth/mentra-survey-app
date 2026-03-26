@@ -48,17 +48,13 @@ Bun.serve({
 
     if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-    // 1. THE ATOMIC HANDSHAKE (Enveloped JSON required by MentraOS)
-    // Must use both the "success/data" envelope AND "Content-Type: application/json"
+// 1. THE ATOMIC HANDSHAKE (Reverted to Flat JSON)
+    // As observed, MentraOS rejects the envelope on this specific low-level route.
     if (url.pathname === "/api/client/min-version" || url.pathname === "/apps/version" || url.pathname === "/") {
         return new Response(JSON.stringify({ 
-            success: true,
-            data: {
-                minVersion: "0.0.1",
-                version: "2.7.0",
-                status: "online"
-            },
-            error: null
+            "minVersion": "0.0.1",
+            "version": "2.7.0",
+            "status": "online"
         }), { 
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
