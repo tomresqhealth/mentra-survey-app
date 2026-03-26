@@ -48,33 +48,45 @@ Bun.serve({
 
     if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-    // 1. THE ATOMIC HANDSHAKE (Flat JSON)
-    // MentraOS often rejects the "success/data" envelope on this specific route.
+    // 1. THE ATOMIC HANDSHAKE (Enveloped JSON required by MentraOS)
+    // Must use both the "success/data" envelope AND "Content-Type: application/json"
     if (url.pathname === "/api/client/min-version" || url.pathname === "/apps/version" || url.pathname === "/") {
         return new Response(JSON.stringify({ 
-            "minVersion": "0.0.1",
-            "version": "2.7.0",
-            "status": "online"
+            success: true,
+            data: {
+                minVersion: "0.0.1",
+                version: "2.7.0",
+                status: "online"
+            },
+            error: null
         }), { 
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
     }
 
     // 2. DISCOVERY: Auth & Apps
-    // We provide both flat and enveloped possibilities to ensure MentraOS finds them.
+    // Strict MentraOS Cloud API envelope formatting required.
     if (url.pathname === "/api/client/auth/status") {
-        return new Response(JSON.stringify({ "authenticated": true, "success": true }), { 
+        return new Response(JSON.stringify({ 
+            success: true, 
+            data: { authenticated: true },
+            error: null
+        }), { 
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
     }
 
     if (url.pathname === "/api/client/apps" || url.pathname === "/apps/list") {
-        return new Response(JSON.stringify([{ 
-          "id": "survey-1", 
-          "name": "Kitchen Survey", 
-          "packageName": PACKAGE_NAME,
-          "icon": "https://mentra.glass/assets/logo.png"
-        }]), { 
+        return new Response(JSON.stringify({ 
+            success: true,
+            data: [{ 
+              id: "survey-1", 
+              name: "Kitchen Survey", 
+              packageName: PACKAGE_NAME,
+              icon: "https://mentra.glass/assets/logo.png"
+            }],
+            error: null
+        }), { 
           status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
         });
     }
