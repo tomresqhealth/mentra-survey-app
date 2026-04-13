@@ -7,7 +7,8 @@ import { getThemePreference, setThemePreference } from "../api/storage";
 import { getLatestPhoto, getPhotoData, getPhotoBase64 } from "../api/photo";
 
 // Create the Hono instance
-export const api = new Hono().basePath("/api"); // Tell Hono all these routes start with /api
+// NOTE: No basePath here — the parent app mounts this at "/api" via app.route("/api", api)
+export const api = new Hono();
 
 // 1. Enable CORS for the iPhone app
 api.use("*", cors({

@@ -26,7 +26,7 @@ export function photoStream(c: Context) {
     });
 
     // Send existing photos
-    for (const photo of user.photo.getAllMap().values()) {
+    for (const photo of user.photo.getAll()) {
       const base64Data = photo.buffer.toString("base64");
       await stream.writeSSE({
         data: JSON.stringify({

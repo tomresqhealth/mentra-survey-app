@@ -41,19 +41,26 @@ export class RecordManager {
 
   /**
    * Uses FFmpeg to convert the raw PCM stream into a high-quality MP3.
+   * Skips gracefully if no audio data was recorded (Phase 2 feature).
    */
   async finalizeRecording(): Promise<string> {
+    // Skip MP3 conversion if no audio data exists yet (Phase 2 placeholder)
+    if (!this.rawAudioPath || !fs.existsSync(this.rawAudioPath) || fs.statSync(this.rawAudioPath).size === 0) {
+      console.log("⏭️ No raw audio data to convert — skipping MP3 finalization.");
+      return "";
+    }
+
     return new Promise((resolve, reject) => {
       console.log("Merging and converting audio to MP3...");
 
       // Mentra Live typically streams 16-bit PCM at 16kHz or 24kHz.
       // We will assume 16kHz for now, which is standard for speech.
       const args = [
-        "-f", "s16le", 
-        "-ar", "16000", 
-        "-ac", "1", 
+        "-f", "s16le",
+        "-ar", "16000",
+        "-ac", "1",
         "-i", this.rawAudioPath,
-        "-y", 
+        "-y",
         this.finalMp3Path
       ];
 

@@ -40,18 +40,32 @@ export class SheetManager {
   async loadSurveySteps(): Promise<SurveyStep[]> {
     try {
       console.log("Fetching survey steps from Google Sheets...");
-      await this.doc.loadInfo();
-      const sheet = this.doc.sheetsByIndex[0]; // The first tab
-      const rows = await sheet.getRows();
+
+      // Timeout guard — Google Sheets API can hang silently
+      const SHEET_TIMEOUT_MS = 15_000;
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Google Sheets fetch timed out after ${SHEET_TIMEOUT_MS / 1000}s`)), SHEET_TIMEOUT_MS)
+      );
+
+      await Promise.race([this.doc.loadInfo(), timeout]);
+      const sheet = this.doc.sheetsByIndex[0];
+      const rows = await Promise.race([sheet.getRows(), timeout]);
+
+      // Log headers so we can debug column mismatches
+      const headerValues = sheet.headerValues;
+      console.log(`📊 Sheet headers: ${JSON.stringify(headerValues)}`);
 
       const steps = rows.map(row => ({
-        id: row.get('Unique Step ID'),
-        appliance: row.get('Appliance'),
-        stepCode: row.get('Step'),
-        voicePrompt: row.get('Voice Prompt'),
-        captureRequirement: row.get('Capture Requirement'),
-        wakeWord: row.get('Wake Word'),
-        nextTrigger: row.get('Next Step Trigger Word'),
+        // Map to whatever headers actually exist in the sheet.
+        // Known headers from the Google Sheet: s, Appliance, Step, Voice Prompt,
+        // Capture Requirement, Wake Word, Next Step Trigger Word
+        id: row.get('s') || row.get('Unique Step ID') || '',
+        appliance: row.get('Appliance') || '',
+        stepCode: row.get('Step') || '',
+        voicePrompt: row.get('Voice Prompt') || '',
+        captureRequirement: row.get('Capture Requirement') || '',
+        wakeWord: row.get('Wake Word') || '',
+        nextTrigger: row.get('Next Step Trigger Word') || '',
       }));
 
       console.log(`Successfully loaded ${steps.length} steps.`);

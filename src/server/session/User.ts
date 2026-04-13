@@ -6,6 +6,7 @@ import { StorageManager } from "../manager/StorageManager";
 import { InputManager } from "../manager/InputManager";
 import { SheetManager } from "../manager/SheetManager"; 
 import { RecordManager } from "../manager/RecordManager"; // <--- NEW
+import { TranscriptManager as TranscriptLog } from "../manager/TranscriptManager"; // <--- NEW
 import { SurveyApp } from "../SurveyApp"; // <--- NEW
 
 /**
@@ -37,6 +38,9 @@ export class User {
   /** Local audio recording and folder management */
   recordManager: RecordManager; // <--- NEW
 
+  /** Chronological transcript of TTS, STT, and photos → Google Doc */
+  transcript: TranscriptLog;
+
   /** The brain that handles the survey steps */
   surveyApp: SurveyApp; // <--- NEW
 
@@ -48,19 +52,17 @@ export class User {
     this.input = new InputManager(this);
     this.sheetManager = new SheetManager();
     this.recordManager = new RecordManager(this); // <--- Initialize
+    this.transcript = new TranscriptLog();
     this.surveyApp = new SurveyApp(this); // <--- Initialize
   }
 
-  /** Wire up a glasses connection — sets up all event listeners */
+  /** Wire up a glasses connection — sets up managers but does NOT auto-start survey.
+   *  The survey is started explicitly from onSession after the greeting. */
   setAppSession(session: AppSession): void {
     this.appSession = session;
-    this.transcription.setup(session);
     this.input.setup(session);
-    
-    // 🚀 Start the survey automatically when glasses connect
-    this.surveyApp.startSurvey("JOB-DEMO-001");
-    
-    console.log(`📋 Survey System ready for ${this.userId}`);
+    // NOTE: transcription listener is set up in onSession to avoid duplicates
+    console.log(`📋 Session wired for ${this.userId}`);
   }
 
   /** Disconnect glasses but keep user alive (photos stay) */

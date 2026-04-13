@@ -1,115 +1,117 @@
-import { AppServer, AppSession, TranscriptionData } from '@mentra/sdk';
-import { sessions } from './server/manager/SessionManager'; 
-import { api } from './server/routes/routes'; 
+import { AppServer, AppSession, TranscriptionData, createMentraAuthRoutes } from '@mentra/sdk';
+import { sessions } from './server/manager/SessionManager';
+import { api } from './server/routes/routes';
 import dotenv from 'dotenv';
+import indexHtml from './frontend/index.html';
 
 dotenv.config();
 
+// ─── Config ──────────────────────────────────────────────────────────
+const PACKAGE_NAME = process.env.PACKAGE_NAME || "appliancesurvey.mentra.glass";
+const API_KEY = process.env.MENTRAOS_API_KEY!;
+const PORT = parseInt(process.env.PORT || "4000", 10);
+const COOKIE_SECRET = process.env.COOKIE_SECRET || "kitchen-survey-dev-secret";
+
+// ─── App Server ──────────────────────────────────────────────────────
 class KitchenSurveyApp extends AppServer {
+
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    console.log(`🚀 KITCHEN SURVEY SESSION STARTED: ${userId}`);
+    console.log(`🚀 Session started: ${userId} (${sessionId})`);
     try {
-        // Essential for MentraOS hardware activation
-        await session.settings.update({ bypassVad: false, sensingEnabled: true });
-        await session.audio.speak("Survey system online.", { volume: 1.0 });
+      // NOTE: Settings like bypassVad and sensingEnabled are managed by MentraOS Cloud.
+      // They can be configured in the Developer Console or react to changes via session.settings.onChange().
 
-        const user = sessions.getOrCreate(userId);
-        user.setAppSession(session);
+      // Get or create the user state container.
+      // If user already exists (app restarted), reset their survey state.
+      const user = sessions.getOrCreate(userId);
+      user.surveyApp.reset();
+      user.setAppSession(session);
 
-        session.events.onTranscription(async (data: TranscriptionData) => {
+      // Greet — runs after setAppSession so the audio manager is wired
+      await session.audio.speak("Survey system online.", { volume: 1.0 });
+
+      // Start the survey in the background — don't block onSession
+      // (Google Sheets fetch + multiple TTS calls take too long and cause disconnects)
+      user.surveyApp.startSurvey("JOB-DEMO-001").catch((e) => {
+        console.error("❌ Survey startup error:", e);
+      });
+
+      // Single transcription listener: broadcasts to SSE AND routes to SurveyApp
+      session.events.onTranscription(async (data: TranscriptionData) => {
+        // 1. Broadcast to webview SSE clients
+        user.transcription.broadcast(data.text, data.isFinal);
+        // 2. Route to survey state machine
+        if (user.surveyApp) {
           await user.surveyApp.handleTranscription(data.text, data.isFinal);
-        });
+        }
+      });
 
-        session.events.onDisconnected(() => {
-          user.clearAppSession();
+      // Cleanup on disconnect
+      session.events.onDisconnected(() => {
+        console.log(`👋 Session disconnected: ${userId}`);
+        user.clearAppSession();
+      });
+
+      // Handle reconnection (e.g. user closes and reopens the miniapp)
+      session.events.onConnected(() => {
+        console.log(`🔄 Session reconnected: ${userId}`);
+        user.setAppSession(session);
+        user.surveyApp.reset();
+        user.surveyApp.startSurvey("JOB-DEMO-001").catch((e) => {
+          console.error("❌ Survey restart on reconnect failed:", e);
         });
-    } catch (e) { console.log("Bridge warming..."); }
+      });
+
+    } catch (e) {
+      console.error("❌ Session setup failed:", e);
+    }
+  }
+
+  protected async onStop(sessionId: string, userId: string, reason: string) {
+    console.log(`🛑 Session stopped: ${userId} — ${reason}`);
+    sessions.remove(userId);
   }
 }
 
-const PACKAGE_NAME = "appliancesurvey.mentra.glass";
-const mentraApp = new KitchenSurveyApp({
-  packageName: PACKAGE_NAME, 
-  apiKey: process.env.MENTRAOS_API_KEY!,
+// ─── Create the app ──────────────────────────────────────────────────
+const app = new KitchenSurveyApp({
+  packageName: PACKAGE_NAME,
+  apiKey: API_KEY,
+  port: PORT,
+  cookieSecret: COOKIE_SECRET,
 });
 
+// Mount auth routes (webview token exchange)
+app.route(
+  "/api/mentra/auth",
+  createMentraAuthRoutes({
+    apiKey: API_KEY,
+    packageName: PACKAGE_NAME,
+    cookieSecret: COOKIE_SECRET,
+  })
+);
+
+// Mount custom API routes (health, SSE streams, audio, photos, etc.)
+app.route("/api", api);
+
+// Let the SDK register its webhook handler, version check, etc.
+await app.start();
+
+// ─── Bun HTTP server ─────────────────────────────────────────────────
 Bun.serve({
-  port: 4000,
+  port: PORT,
   hostname: "0.0.0.0",
+  idleTimeout: 255, // Max value (seconds) — prevents Bun from killing long-lived SSE connections
+  routes: {
+    "/webview": indexHtml,
+    "/webview/*": indexHtml,
+  },
   async fetch(req) {
-    const url = new URL(req.url);
-    const corsHeaders = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS", // Added for MentraOS strictness
-        "Access-Control-Allow-Headers": "Content-Type, x-mentra-signature, x-mentra-frontend-token, Sec-WebSocket-Protocol",
-    };
-
-    console.log(`[Request] ${req.method} ${url.pathname}`);
-
-    if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-// 1. THE ATOMIC HANDSHAKE (Reverted to Flat JSON)
-    // As observed, MentraOS rejects the envelope on this specific low-level route.
-    if (url.pathname === "/api/client/min-version" || url.pathname === "/apps/version" || url.pathname === "/") {
-        return new Response(JSON.stringify({ 
-            "minVersion": "0.0.1",
-            "version": "2.7.0",
-            "status": "online"
-        }), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    // 2. DISCOVERY: Auth & Apps
-    // Strict MentraOS Cloud API envelope formatting required.
-    if (url.pathname === "/api/client/auth/status") {
-        return new Response(JSON.stringify({ 
-            success: true, 
-            data: { authenticated: true },
-            error: null
-        }), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    if (url.pathname === "/api/client/apps" || url.pathname === "/apps/list") {
-        return new Response(JSON.stringify({ 
-            success: true,
-            data: [{ 
-              id: "survey-1", 
-              name: "Kitchen Survey", 
-              packageName: PACKAGE_NAME,
-              icon: "https://mentra.glass/assets/logo.png"
-            }],
-            error: null
-        }), { 
-          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-    }
-
-    // 3. WEBSOCKET: Nuclear Upgrade (The Handyman Magic)
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-        console.log("🔌 Upgrading to WebSocket (Nuclear Protocol)...");
-        const protocol = req.headers.get("Sec-WebSocket-Protocol");
-        const respOptions: any = { 
-            headers: { 
-                ...corsHeaders, 
-                "x-mentra-signature": "bypass", 
-                "x-mentra-frontend-token": "bypass" 
-            } 
-        };
-        if (protocol) respOptions.headers["Sec-WebSocket-Protocol"] = protocol;
-        return mentraApp.fetch(req, respOptions);
-    }
-
-    // 4. SURVEY API (Hono)
-    if (url.pathname.startsWith("/api") && !url.pathname.startsWith("/api/client")) {
-        return api.fetch(req);
-    }
-
-    // 5. DEFAULT SDK HANDLER
-    return mentraApp.fetch(req);
+    // Everything else goes through the SDK's Hono router
+    return app.fetch(req);
   },
 });
 
-console.log(`✅ NUCLEAR BRIDGE ACTIVE: ${PACKAGE_NAME}`);
+console.log(`✅ Kitchen Survey running on port ${PORT}`);
+console.log(`   Package: ${PACKAGE_NAME}`);
+console.log(`   Webview: http://localhost:${PORT}/webview`);

@@ -1,5 +1,6 @@
 import type { User } from "../session/User";
-import fs from "fs";
+import { promises as fs } from "fs";
+import { existsSync } from "fs";
 import path from "path";
 
 export interface StoredPhoto {
@@ -20,7 +21,7 @@ interface SSEWriter {
 
 /**
  * PhotoManager — captures, stores, and broadcasts photos.
- * Updated: Now saves a physical copy to the local RecordManager folder.
+ * Saves a physical copy to the local RecordManager folder.
  */
 export class PhotoManager {
   private photos: Map<string, StoredPhoto> = new Map();
@@ -28,21 +29,27 @@ export class PhotoManager {
 
   constructor(private user: User) {}
 
-  /** Capture a photo from the glasses, save to disk, and broadcast to UI */
+  /**
+   * Capture a photo from the glasses, save to disk, and broadcast to UI.
+   * Requests 1080p images for better quality on site surveys.
+   */
   async takePhoto(): Promise<void> {
     const session = this.user.appSession;
-    if (!session) throw new Error("No active glasses session");
+    if (!session) {
+      console.warn(`⚠️ Cannot take photo — no active session for ${this.user.userId}`);
+      return;
+    }
 
     try {
-      // 1. Request the photo from the glasses
-      const photo = await session.camera.requestPhoto();
+      // 1. Request a high-res photo from the glasses
+      const photo = await session.camera.requestPhoto({ size: "large" });
 
       // CONVERT: Turn the SDK's ArrayBuffer into a standard Node.js Buffer
       const nodeBuffer = Buffer.from(photo.buffer);
 
       const stored: StoredPhoto = {
         requestId: photo.requestId,
-        buffer: nodeBuffer, // <-- Use the converted buffer here
+        buffer: nodeBuffer,
         timestamp: photo.timestamp,
         userId: this.user.userId,
         mimeType: photo.mimeType,
@@ -50,28 +57,29 @@ export class PhotoManager {
         size: photo.size,
       };
 
-      // 2. Save a physical copy to your MacBook for the Audit Trail
+      // 2. Save a physical copy to your MacBook (async — doesn't block)
       const sessionDir = this.user.recordManager.getFolder();
-      if (sessionDir && fs.existsSync(sessionDir)) {
-        // Create a clear filename: Photo_Timestamp.jpg
+      if (sessionDir && existsSync(sessionDir)) {
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
         const localFilename = `Photo_${timestamp}.jpg`;
         const filePath = path.join(sessionDir, localFilename);
-        
-        // Write the converted Node buffer to the file system
-        fs.writeFileSync(filePath, nodeBuffer);
-        console.log(`💾 File Saved: ${filePath}`);
+
+        await fs.writeFile(filePath, nodeBuffer);
+        console.log(`💾 File Saved: ${filePath} (${photo.size} bytes)`);
       }
 
       // 3. Keep in memory and broadcast to the Web Dashboard
       this.photos.set(photo.requestId, stored);
       this.broadcastPhoto(stored);
-      
-      console.log(
-        `📸 Photo broadcast to UI for ${this.user.userId} (${photo.size} bytes)`,
-      );
-    } catch (error) {
-      console.error("❌ Photo Capture/Save Error:", error);
+
+      // Log to transcript so the photo appears inline in the Google Doc
+      this.user.transcript.addPhoto(nodeBuffer, photo.filename);
+
+      console.log(`📸 Photo captured for ${this.user.userId} (${photo.size} bytes)`);
+    } catch (error: any) {
+      console.error(`❌ Photo capture failed: ${error.message}`);
+      // Re-throw so callers (SurveyApp) can notify the technician
+      throw error;
     }
   }
 
