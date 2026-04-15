@@ -69,24 +69,14 @@ Kitchen Appliance Site Survey miniapp for **MentraOS smart glasses** (Mentra Liv
 - APIs enabled: Google Sheets API, Google Drive API
 - Credentials file: `service-account.json` in project root
 
-## Current Issue — Google Drive Upload Failing
+## Google Drive Upload — RESOLVED
 
-**Status: UNRESOLVED** — The Google Drive upload fails with `403: storageQuotaExceeded`. The service account has zero Drive storage quota.
+**Status: WORKING** as of 2026-04-15. Domain-wide delegation is enabled and transcripts upload successfully.
 
-### What's Been Tried
-1. Uploading to a shared folder in Tom's Drive (`GOOGLE_DRIVE_FOLDER_ID=1JxG1VhyiaRRCckjAQ4wk_xEwL9aLkjtJ`) — still fails because file ownership = service account
-2. Adding `supportsAllDrives=true` to upload URL — still fails
-3. Transfer ownership after upload — can't transfer because upload itself fails
-4. Service account impersonation (`subject: tom.elliott@resqware.solutions` in JWT) — requires domain-wide delegation setup
-
-### Next Steps to Fix
-Tom has Google Workspace (paid). To enable domain-wide delegation:
-1. **Google Cloud Console** → Service account → Advanced settings → Enable "Domain-wide delegation" → get Client ID
-2. **Google Workspace Admin** (admin.google.com) → Security → API Controls → Domain-wide Delegation → Add new → Enter Client ID + scope `https://www.googleapis.com/auth/drive.file`
-3. The code already has the `subject` impersonation in `TranscriptManager.ts` — once delegation is enabled, it should work
-
-### Alternative Approach (if delegation is too complex)
-Upload a text-only transcript (no images) which would be tiny. Or upload images as separate Drive files first, then reference them by URL in the HTML.
+- Service account impersonates Tom's email via JWT `subject` field (`GOOGLE_DRIVE_SHARE_EMAIL`)
+- Files are created in Tom's Drive (not the service account's), avoiding the `403: storageQuotaExceeded` error
+- `shareWithOwner()` transfers ownership after upload
+- Confirmed working end-to-end: transcript HTML with inline base64 images uploads and converts to native Google Doc
 
 ## Bluetooth Constraints
 - All data flows: glasses → BT → phone → internet → Cloud → server

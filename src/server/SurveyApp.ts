@@ -216,8 +216,13 @@ export class SurveyApp {
     // ── LATE ECHO CHECK (always-on, TTL-based) ───────────────────────
     // After all echo windows close, late-arriving echoes can still slip
     // through. The TTL-based word history in AudioManager catches these.
+    // EXCEPTION: Short (1-2 word) interrupt commands bypass this check.
+    // By the time all echo windows have closed, a deliberate single-word
+    // command like "finish" or "next" is real user intent — not a late echo.
     if (!audio.isSpeaking && !audio.isCoolingDown && !audio.isInEchoMemory) {
-      if (audio.isLateEcho(text)) {
+      const wordCount = text.split(/\s+/).length;
+      const isShortCommand = audio.isInterruptCommand(text) && wordCount <= 2;
+      if (!isShortCommand && audio.isLateEcho(text)) {
         console.log("🔇 Dropped as late echo (TTL buffer match)");
         return;
       }
