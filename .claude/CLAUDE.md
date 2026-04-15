@@ -112,3 +112,14 @@ This gives Tom live log visibility while Claude has passive read access. Tom con
 
 ## Job ID
 Currently hardcoded as `JOB-DEMO-001` — needs to be dynamic for production.
+
+## MentraOS SDK Source (Local Clone)
+- **Path:** `/Users/admin/Desktop/Coding Projects/MentraOS`
+- **Usage:** Cross-reference actual SDK source code when docs seem stale or incomplete. Run `git pull` to update.
+
+## Key Reference Links
+- **MentraOS GitHub:** https://github.com/Mentra-Community/MentraOS
+- **MentraOS Docs (LLM-friendly):** https://cloud-docs.mentra.glass/llms-full.txt
+- **MentraOS SDK Docs:** https://docs.mentra.glass
+- **Developer Console:** https://console.mentra.glass
+- **GitHub Releases:** https://github.com/Mentra-Community/MentraOS/releases
